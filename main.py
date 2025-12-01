@@ -24,7 +24,6 @@ class TP3:
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_styles = mp.solutions.drawing_styles
 
-        # Pastas corretas
         self.instrument_folders = {
             "Piano": "Sons/Piano",
             "Guitarra": "  Somns/Guitarra"
