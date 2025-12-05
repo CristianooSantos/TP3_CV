@@ -3,6 +3,8 @@ import mediapipe as mp
 from audio_engine import AudioEngine
 from hand_gesture_recognizer import HandGestureRecognizer
 from ultralytics import YOLO
+import pygame
+import os
 
 
 class TP3:
@@ -19,19 +21,29 @@ class TP3:
             "PINKY": (20, 18),
         }
 
-        # ----- CARROSSEL DE INSTRUMENTOS -----
         self.instruments = ["Piano", "Guitarra", "Objetos"]
         self.instrument_index = 0
         self.instrument = self.instruments[self.instrument_index]
-        self.last_lean = "CENTER"  # para não trocar 1000x enquanto a cabeça está inclinada
-
-        # Face mesh (para detetar inclinação da cabeça)
+        self.last_lean = "CENTER"
         self.mp_face = mp.solutions.face_mesh.FaceMesh(refine_landmarks=True)
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_styles = mp.solutions.drawing_styles
 
-        # YOLO MODEL
         self.yolo = YOLO("yolov8n.pt")
+
+        self.object_music = {
+            "book": "Sons/Objetos/book.mp3",
+            "cup": "Sons/Objetos/copo.mp3",
+            "bottle": "Sons/Objetos/garrafa.mp3",
+            "laptop": "Sons/Objetos/laptop.mp3",
+            "apple": "Sons/Objetos/maca.mp3",
+        }
+
+
+        self.last_object = None
+        self.cooldown_frames = 0
+
+        pygame.mixer.init()
 
     def detect_head_lean(self, face_landmarks):
         left_eye = face_landmarks.landmark[33]
@@ -56,6 +68,17 @@ class TP3:
         cv2.putText(frame, f"{finger_name}: {note}", (x, y),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
+    def play_object_music(self, label):
+        """Toca a música associada ao objeto YOLO com esse label."""
+        path = self.object_music.get(label)
+        if not path:
+            return
+
+        if os.path.exists(path):
+            pygame.mixer.music.load(path)
+            pygame.mixer.music.play()
+            print(f"🎵 A tocar música para objeto: {label}")
+
     def run(self):
         while True:
             ret, frame = self.cap.read()
@@ -66,9 +89,6 @@ class TP3:
             h, w, _ = frame.shape
             final_frame = frame.copy()
 
-            # ---------------------------------
-            # HEAD TILT / CARROSSEL / MODOS
-            # ---------------------------------
             face = self.mp_face.process(frame)
             if face.multi_face_landmarks:
                 lean_dir = self.detect_head_lean(face.multi_face_landmarks[0])
@@ -86,12 +106,16 @@ class TP3:
             else:
                 self.last_lean = "CENTER"
 
+            if self.instrument != "Objetos":
+                pygame.mixer.music.stop()
+                self.last_object = None
+                self.cooldown_frames = 0
+
             cv2.putText(final_frame, self.instrument, (20, 50),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
 
-            # -----------------------------------
-            # YOLO: APENAS NO MODO "Objetos"
-            # -----------------------------------
+            detected_object = None
+
             if self.instrument == "Objetos":
                 yolo_results = self.yolo.predict(frame, conf=0.60, verbose=False)
 
@@ -100,7 +124,6 @@ class TP3:
                         cls = int(box.cls[0])
                         label = r.names[cls]
 
-                        # ignorar pessoas
                         if label.lower() == "person":
                             continue
 
@@ -109,9 +132,19 @@ class TP3:
                         cv2.putText(final_frame, label, (x1, y1 - 10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
-            # -----------------------------------
-            # HAND GESTURES (DESLIGADO EM "Objetos")
-            # -----------------------------------
+                        if label in self.object_music:
+                            detected_object = label
+
+                if detected_object:
+                    if (detected_object != self.last_object) or (self.cooldown_frames == 0):
+                        if not pygame.mixer.music.get_busy():
+                            self.play_object_music(detected_object)
+                            self.last_object = detected_object
+                            self.cooldown_frames = 30  
+
+                if self.cooldown_frames > 0:
+                    self.cooldown_frames -= 1
+
             if self.instrument != "Objetos":
                 hands, handedness = self.rec.process(frame)
 
@@ -158,6 +191,7 @@ class TP3:
 
         self.cap.release()
         cv2.destroyAllWindows()
+        pygame.mixer.quit()
 
 
 if __name__ == "__main__":
