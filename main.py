@@ -31,6 +31,13 @@ class TP3:
         self.instrument = self.instruments[self.instrument_index]
         self.last_lean = "CENTER"
 
+        self.octave = 0
+        self.min_octave = -1
+        self.max_octave = 0
+
+        self.octave_high_zone = 0.4
+        self.octave_low_zone = 0.6
+
         self.mp_face = mp.solutions.face_mesh.FaceMesh(refine_landmarks=True)
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_styles = mp.solutions.drawing_styles
@@ -85,6 +92,74 @@ class TP3:
             for finger in self.finger_state[hand]:
                 self.finger_state[hand][finger] = False
 
+    def retrigger_active_notes(self):
+        """
+        Reproduz novamente todas as notas cujos dedos ainda estão levantados,
+        para aplicar imediatamente a nova oitava.
+        """
+        # Right hand
+        for finger, is_ext in self.finger_state["Right"].items():
+            if not is_ext:
+                continue
+
+            if finger == "PINKY":
+                self.audio.note_on(self.instrument, "DO")
+            if finger == "RING":
+                self.audio.note_on(self.instrument, "RE")
+            if finger == "MIDDLE":
+                self.audio.note_on(self.instrument, "MI")
+            if finger == "INDEX":
+                self.audio.note_on(self.instrument, "FA")
+            if finger == "THUMB":
+                self.audio.note_on(self.instrument, "SOL")
+
+        # Left hand
+        for finger, is_ext in self.finger_state["Left"].items():
+            if not is_ext:
+                continue
+
+            if finger == "INDEX":
+                self.audio.note_on(self.instrument, "LA")
+            if finger == "MIDDLE":
+                self.audio.note_on(self.instrument, "SI")
+
+    def update_octave_from_right_arm(self, hands, handedness):
+        """
+        Usa a posição vertical do pulso direito para mudar de oitava:
+        - Pulso lá em cima  (y < high_zone) → oitava 0
+        - Pulso lá em baixo (y > low_zone)  → oitava -1
+        - Zona intermédia  → não muda
+        """
+        right_wrist_y = None
+
+        if hands and handedness:
+            for idx, hand in enumerate(hands):
+                label = handedness[idx].classification[0].label
+                if label == "Right":
+                    right_wrist_y = hand.landmark[0].y
+                    break
+
+        if right_wrist_y is None:
+            return
+
+        new_octave = self.octave
+
+        if right_wrist_y < self.octave_high_zone:
+            new_octave = 0      
+        elif right_wrist_y > self.octave_low_zone:
+            new_octave = -1      
+        else:
+            return
+
+        if new_octave != self.octave:
+            self.octave = new_octave
+            print(f"[Octave] Changed to {self.octave}")
+
+            if hasattr(self.audio, "set_octave"):
+                self.audio.set_octave(self.octave)
+
+            self.retrigger_active_notes()
+
 
     def run(self):
         while True:
@@ -125,6 +200,14 @@ class TP3:
             cv2.putText(final_frame, self.instrument, (20, 50),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
 
+            cv2.putText(final_frame, f"Octave: {self.octave}", (20, 85),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
+
+            y_high = int(self.octave_high_zone * h)
+            y_low = int(self.octave_low_zone * h)
+            cv2.line(final_frame, (0, y_high), (w, y_high), (100, 100, 255), 1)
+            cv2.line(final_frame, (0, y_low), (w, y_low), (100, 255, 100), 1)
+
             detected_object = None
 
             if self.instrument == "Objetos":
@@ -159,6 +242,8 @@ class TP3:
             if self.instrument != "Objetos":
                 hands, handedness = self.rec.process(frame)
 
+                self.update_octave_from_right_arm(hands, handedness)
+
                 if hands:
                     for idx, hand in enumerate(hands):
                         self.mp_drawing.draw_landmarks(
@@ -169,7 +254,7 @@ class TP3:
                         )
 
                     for idx, hand in enumerate(hands):
-                        hand_label = handedness[idx].classification[0].label 
+                        hand_label = handedness[idx].classification[0].label  # "Right" ou "Left"
 
                         if hand_label == "Right":
                             prev = self.finger_state["Right"]["PINKY"]
@@ -177,7 +262,7 @@ class TP3:
                             if is_ext and not prev:
                                 self.audio.note_on(self.instrument, "DO")
                             if not is_ext and prev:
-                                self.audio.note_off(self.instrument, "DO") 
+                                self.audio.note_off(self.instrument, "DO")
                             if is_ext:
                                 self.draw_finger_text(final_frame, "PINKY", "DO", hand.landmark[20], w, h)
                             self.finger_state["Right"]["PINKY"] = is_ext
