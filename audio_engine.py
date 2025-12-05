@@ -81,7 +81,7 @@ class AudioEngine:
             if key in self.active_notes:
                 del self.active_notes[key]
 
-    def note_off(self, instrument, note, release_seconds=2):
+    def note_off(self, instrument, note, release_seconds=1):
         """Schedule this note to stop in `release_seconds` seconds."""
         key = (instrument, note, self.current_octave)
         stop_time = time.time() + release_seconds
