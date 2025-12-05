@@ -38,6 +38,8 @@ class TP3:
         self.octave_high_zone = 0.4
         self.octave_low_zone = 0.6
 
+        self.octave_control_enabled = False
+
         self.mp_face = mp.solutions.face_mesh.FaceMesh(refine_landmarks=True)
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_styles = mp.solutions.drawing_styles
@@ -54,7 +56,6 @@ class TP3:
 
         self.last_object = None
         self.cooldown_frames = 0
-
 
     def detect_head_lean(self, face_landmarks):
         left_eye = face_landmarks.landmark[33]
@@ -73,8 +74,15 @@ class TP3:
     def draw_finger_text(self, frame, finger_name, note, landmark, w, h):
         x = int(landmark.x * w)
         y = int(landmark.y * h) - 25
-        cv2.putText(frame, f"{finger_name}: {note}", (x, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        cv2.putText(
+            frame,
+            f"{finger_name}: {note}",
+            (x, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 0),
+            2,
+        )
 
     def play_object_music(self, label):
         path = self.object_music.get(label)
@@ -93,11 +101,6 @@ class TP3:
                 self.finger_state[hand][finger] = False
 
     def retrigger_active_notes(self):
-        """
-        Reproduz novamente todas as notas cujos dedos ainda estão levantados,
-        para aplicar imediatamente a nova oitava.
-        """
-        # Right hand
         for finger, is_ext in self.finger_state["Right"].items():
             if not is_ext:
                 continue
@@ -113,7 +116,6 @@ class TP3:
             if finger == "THUMB":
                 self.audio.note_on(self.instrument, "SOL")
 
-        # Left hand
         for finger, is_ext in self.finger_state["Left"].items():
             if not is_ext:
                 continue
@@ -124,12 +126,9 @@ class TP3:
                 self.audio.note_on(self.instrument, "SI")
 
     def update_octave_from_right_arm(self, hands, handedness):
-        """
-        Usa a posição vertical do pulso direito para mudar de oitava:
-        - Pulso lá em cima  (y < high_zone) → oitava 0
-        - Pulso lá em baixo (y > low_zone)  → oitava -1
-        - Zona intermédia  → não muda
-        """
+        if not self.octave_control_enabled:
+            return
+
         right_wrist_y = None
 
         if hands and handedness:
@@ -145,9 +144,9 @@ class TP3:
         new_octave = self.octave
 
         if right_wrist_y < self.octave_high_zone:
-            new_octave = 0      
+            new_octave = 0
         elif right_wrist_y > self.octave_low_zone:
-            new_octave = -1      
+            new_octave = -1
         else:
             return
 
@@ -159,7 +158,6 @@ class TP3:
                 self.audio.set_octave(self.octave)
 
             self.retrigger_active_notes()
-
 
     def run(self):
         while True:
@@ -179,11 +177,15 @@ class TP3:
 
                 if lean_dir != self.last_lean:
                     if lean_dir == "RIGHT":
-                        self.instrument_index = (self.instrument_index + 1) % len(self.instruments)
+                        self.instrument_index = (self.instrument_index + 1) % len(
+                            self.instruments
+                        )
                         self.instrument = self.instruments[self.instrument_index]
                         print("Modo:", self.instrument)
                     elif lean_dir == "LEFT":
-                        self.instrument_index = (self.instrument_index - 1) % len(self.instruments)
+                        self.instrument_index = (self.instrument_index - 1) % len(
+                            self.instruments
+                        )
                         self.instrument = self.instruments[self.instrument_index]
                         print("Modo:", self.instrument)
                     self.last_lean = lean_dir
@@ -197,11 +199,36 @@ class TP3:
             else:
                 self.reset_finger_state_and_stop_notes()
 
-            cv2.putText(final_frame, self.instrument, (20, 50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
+            cv2.putText(
+                final_frame,
+                self.instrument,
+                (20, 50),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.2,
+                (255, 255, 255),
+                3,
+            )
 
-            cv2.putText(final_frame, f"Octave: {self.octave}", (20, 85),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
+            cv2.putText(
+                final_frame,
+                f"Octave: {self.octave}",
+                (20, 85),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (200, 200, 200),
+                2,
+            )
+
+            octave_status = "ON" if self.octave_control_enabled else "OFF"
+            cv2.putText(
+                final_frame,
+                f"OctCtl: {octave_status}",
+                (20, 115),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (180, 180, 255),
+                2,
+            )
 
             y_high = int(self.octave_high_zone * h)
             y_low = int(self.octave_low_zone * h)
@@ -222,15 +249,26 @@ class TP3:
                             continue
 
                         x1, y1, x2, y2 = map(int, box.xyxy[0])
-                        cv2.rectangle(final_frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
-                        cv2.putText(final_frame, yolo_label, (x1, y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                        cv2.rectangle(
+                            final_frame, (x1, y1), (x2, y2), (0, 255, 255), 2
+                        )
+                        cv2.putText(
+                            final_frame,
+                            yolo_label,
+                            (x1, y1 - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.8,
+                            (0, 255, 255),
+                            2,
+                        )
 
                         if yolo_label in self.object_music:
                             detected_object = yolo_label
 
                 if detected_object:
-                    if (detected_object != self.last_object) or (self.cooldown_frames == 0):
+                    if (detected_object != self.last_object) or (
+                        self.cooldown_frames == 0
+                    ):
                         if not pygame.mixer.music.get_busy():
                             self.play_object_music(detected_object)
                             self.last_object = detected_object
@@ -242,98 +280,187 @@ class TP3:
             if self.instrument != "Objetos":
                 hands, handedness = self.rec.process(frame)
 
+                self.octave_control_enabled = False
+                if hands and handedness:
+                    for idx, hand in enumerate(hands):
+                        hand_label = handedness[idx].classification[0].label
+                        if hand_label == "Left":
+                            all_ext = True
+                            for fname, (tip_id, pip_id) in self.fingers.items():
+                                if fname == "THUMB":
+                                    ext = self.rec.finger_extended(
+                                        hand, tip_id, pip_id, w, h, hand_label, "THUMB"
+                                    )
+                                else:
+                                    ext = self.rec.finger_extended(
+                                        hand, tip_id, pip_id, w, h
+                                    )
+                                if not ext:
+                                    all_ext = False
+                                    break
+                            if all_ext:
+                                self.octave_control_enabled = True
+                                break
+
                 self.update_octave_from_right_arm(hands, handedness)
 
                 if hands:
                     for idx, hand in enumerate(hands):
                         self.mp_drawing.draw_landmarks(
-                            final_frame, hand,
+                            final_frame,
+                            hand,
                             mp.solutions.hands.HAND_CONNECTIONS,
                             self.mp_styles.get_default_hand_landmarks_style(),
-                            self.mp_styles.get_default_hand_connections_style()
+                            self.mp_styles.get_default_hand_connections_style(),
                         )
 
                     for idx, hand in enumerate(hands):
-                        hand_label = handedness[idx].classification[0].label  # "Right" ou "Left"
+                        hand_label = handedness[idx].classification[0].label
 
                         if hand_label == "Right":
                             prev = self.finger_state["Right"]["PINKY"]
-                            is_ext = self.rec.finger_extended(hand, *self.fingers["PINKY"], w, h)
+                            is_ext = self.rec.finger_extended(
+                                hand, *self.fingers["PINKY"], w, h
+                            )
                             if is_ext and not prev:
                                 self.audio.note_on(self.instrument, "DO")
                             if not is_ext and prev:
                                 self.audio.note_off(self.instrument, "DO")
                             if is_ext:
-                                self.draw_finger_text(final_frame, "PINKY", "DO", hand.landmark[20], w, h)
+                                self.draw_finger_text(
+                                    final_frame,
+                                    "PINKY",
+                                    "DO",
+                                    hand.landmark[20],
+                                    w,
+                                    h,
+                                )
                             self.finger_state["Right"]["PINKY"] = is_ext
 
                             prev = self.finger_state["Right"]["RING"]
-                            is_ext = self.rec.finger_extended(hand, *self.fingers["RING"], w, h)
+                            is_ext = self.rec.finger_extended(
+                                hand, *self.fingers["RING"], w, h
+                            )
                             if is_ext and not prev:
                                 self.audio.note_on(self.instrument, "RE")
                             if not is_ext and prev:
                                 self.audio.note_off(self.instrument, "RE")
                             if is_ext:
-                                self.draw_finger_text(final_frame, "RING", "RE", hand.landmark[16], w, h)
+                                self.draw_finger_text(
+                                    final_frame,
+                                    "RING",
+                                    "RE",
+                                    hand.landmark[16],
+                                    w,
+                                    h,
+                                )
                             self.finger_state["Right"]["RING"] = is_ext
 
                             prev = self.finger_state["Right"]["MIDDLE"]
-                            is_ext = self.rec.finger_extended(hand, *self.fingers["MIDDLE"], w, h)
+                            is_ext = self.rec.finger_extended(
+                                hand, *self.fingers["MIDDLE"], w, h
+                            )
                             if is_ext and not prev:
                                 self.audio.note_on(self.instrument, "MI")
                             if not is_ext and prev:
                                 self.audio.note_off(self.instrument, "MI")
                             if is_ext:
-                                self.draw_finger_text(final_frame, "MIDDLE", "MI", hand.landmark[12], w, h)
+                                self.draw_finger_text(
+                                    final_frame,
+                                    "MIDDLE",
+                                    "MI",
+                                    hand.landmark[12],
+                                    w,
+                                    h,
+                                )
                             self.finger_state["Right"]["MIDDLE"] = is_ext
 
                             prev = self.finger_state["Right"]["INDEX"]
-                            is_ext = self.rec.finger_extended(hand, *self.fingers["INDEX"], w, h)
+                            is_ext = self.rec.finger_extended(
+                                hand, *self.fingers["INDEX"], w, h
+                            )
                             if is_ext and not prev:
                                 self.audio.note_on(self.instrument, "FA")
                             if not is_ext and prev:
                                 self.audio.note_off(self.instrument, "FA")
                             if is_ext:
-                                self.draw_finger_text(final_frame, "INDEX", "FA", hand.landmark[8], w, h)
+                                self.draw_finger_text(
+                                    final_frame,
+                                    "INDEX",
+                                    "FA",
+                                    hand.landmark[8],
+                                    w,
+                                    h,
+                                )
                             self.finger_state["Right"]["INDEX"] = is_ext
 
                             prev = self.finger_state["Right"]["THUMB"]
                             is_ext = self.rec.finger_extended(
-                                hand, *self.fingers["THUMB"], w, h, hand_label, "THUMB"
+                                hand,
+                                *self.fingers["THUMB"],
+                                w,
+                                h,
+                                hand_label,
+                                "THUMB",
                             )
                             if is_ext and not prev:
                                 self.audio.note_on(self.instrument, "SOL")
                             if not is_ext and prev:
                                 self.audio.note_off(self.instrument, "SOL")
                             if is_ext:
-                                self.draw_finger_text(final_frame, "THUMB", "SOL", hand.landmark[4], w, h)
+                                self.draw_finger_text(
+                                    final_frame,
+                                    "THUMB",
+                                    "SOL",
+                                    hand.landmark[4],
+                                    w,
+                                    h,
+                                )
                             self.finger_state["Right"]["THUMB"] = is_ext
 
                         if hand_label == "Left":
                             prev = self.finger_state["Left"]["INDEX"]
-                            is_ext = self.rec.finger_extended(hand, *self.fingers["INDEX"], w, h)
+                            is_ext = self.rec.finger_extended(
+                                hand, *self.fingers["INDEX"], w, h
+                            )
                             if is_ext and not prev:
                                 self.audio.note_on(self.instrument, "LA")
                             if not is_ext and prev:
                                 self.audio.note_off(self.instrument, "LA")
                             if is_ext:
-                                self.draw_finger_text(final_frame, "INDEX", "LA", hand.landmark[8], w, h)
+                                self.draw_finger_text(
+                                    final_frame,
+                                    "INDEX",
+                                    "LA",
+                                    hand.landmark[8],
+                                    w,
+                                    h,
+                                )
                             self.finger_state["Left"]["INDEX"] = is_ext
 
                             prev = self.finger_state["Left"]["MIDDLE"]
-                            is_ext = self.rec.finger_extended(hand, *self.fingers["MIDDLE"], w, h)
+                            is_ext = self.rec.finger_extended(
+                                hand, *self.fingers["MIDDLE"], w, h
+                            )
                             if is_ext and not prev:
                                 self.audio.note_on(self.instrument, "SI")
                             if not is_ext and prev:
                                 self.audio.note_off(self.instrument, "SI")
                             if is_ext:
-                                self.draw_finger_text(final_frame, "MIDDLE", "SI", hand.landmark[12], w, h)
+                                self.draw_finger_text(
+                                    final_frame,
+                                    "MIDDLE",
+                                    "SI",
+                                    hand.landmark[12],
+                                    w,
+                                    h,
+                                )
                             self.finger_state["Left"]["MIDDLE"] = is_ext
                 else:
                     self.reset_finger_state_and_stop_notes()
 
             cv2.imshow("Maestro", final_frame)
-            if cv2.waitKey(50) & 0xFF == ord('q'):
+            if cv2.waitKey(50) & 0xFF == ord("q"):
                 break
 
         self.cap.release()
