@@ -266,16 +266,11 @@ class TP3:
                             detected_object = yolo_label
 
                 if detected_object:
-                    if (detected_object != self.last_object) or (
-                        self.cooldown_frames == 0
-                    ):
-                        if not pygame.mixer.music.get_busy():
-                            self.play_object_music(detected_object)
-                            self.last_object = detected_object
-                            self.cooldown_frames = 30
+                    if detected_object != self.last_object:
+                        pygame.mixer.music.stop()
+                        self.play_object_music(detected_object)
+                        self.last_object = detected_object
 
-                if self.cooldown_frames > 0:
-                    self.cooldown_frames -= 1
 
             if self.instrument != "Objetos":
                 hands, handedness = self.rec.process(frame)
