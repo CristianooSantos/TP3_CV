@@ -2,7 +2,8 @@ import cv2
 import mediapipe as mp
 from audio_engine import AudioEngine
 from hand_gesture_recognizer import HandGestureRecognizer
-import pygame
+from ultralytics import YOLO
+
 
 class TP3:
     def __init__(self):
@@ -24,16 +25,7 @@ class TP3:
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_styles = mp.solutions.drawing_styles
 
-        self.instrument_folders = {
-            "Piano": "Sons/Piano",
-            "Guitarra": "  Somns/Guitarra"
-        }
-
-    def draw_finger_text(self, frame, finger_name, note, landmark, w, h):
-        x = int(landmark.x * w)
-        y = int(landmark.y * h) - 25
-        cv2.putText(frame, f"{finger_name}: {note}", (x, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        self.yolo = YOLO("yolov8n.pt")
 
     def detect_head_lean(self, face_landmarks):
         left_eye = face_landmarks.landmark[33]
@@ -43,17 +35,20 @@ class TP3:
         dy = right_eye.y - left_eye.y
         slope = dy / abs(dx) if abs(dx) > 0.0001 else 0
 
-        if slope > 0.10:
+        if slope > 0.35:
             return "LEFT"
-        elif slope < -0.10:
+        elif slope < -0.35:
             return "RIGHT"
         return "CENTER"
 
     def play_note(self, note):
-        folder = self.instrument_folders[self.instrument]
-        file_path = f"{folder}/{note}_{self.instrument}.wav"
         self.audio.play(self.instrument, note)
 
+    def draw_finger_text(self, frame, finger_name, note, landmark, w, h):
+        x = int(landmark.x * w)
+        y = int(landmark.y * h) - 25
+        cv2.putText(frame, f"{finger_name}: {note}", (x, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     def run(self):
         while True:
@@ -63,6 +58,7 @@ class TP3:
 
             frame = cv2.flip(frame, 1)
             h, w, _ = frame.shape
+            final_frame = frame.copy()
 
             face = self.mp_face.process(frame)
             if face.multi_face_landmarks:
@@ -72,11 +68,25 @@ class TP3:
                 elif lean_dir == "LEFT":
                     self.instrument = "Piano"
 
-            cv2.putText(frame, self.instrument, (20, 50),
+            cv2.putText(final_frame, self.instrument, (20, 50),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3)
 
+            yolo_results = self.yolo.predict(frame, conf=0.60, verbose=False)
+
+            for r in yolo_results:
+                for box in r.boxes:
+                    cls = int(box.cls[0])
+                    label = r.names[cls]
+
+                    if label.lower() == "person":
+                        continue
+
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cv2.rectangle(final_frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                    cv2.putText(final_frame, label, (x1, y1 - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+
             hands, handedness = self.rec.process(frame)
-            final_frame = frame.copy()
 
             if hands:
                 for idx, hand in enumerate(hands):
@@ -90,24 +100,19 @@ class TP3:
             if hands:
                 for idx, hand in enumerate(hands):
                     label = handedness[idx].classification[0].label
-
                     if label == "Right":
                         if self.rec.finger_extended(hand, *self.fingers["PINKY"], w, h):
                             self.play_note("DO")
                             self.draw_finger_text(final_frame, "PINKY", "DO", hand.landmark[20], w, h)
-
                         if self.rec.finger_extended(hand, *self.fingers["RING"], w, h):
                             self.play_note("RE")
                             self.draw_finger_text(final_frame, "RING", "RE", hand.landmark[16], w, h)
-
                         if self.rec.finger_extended(hand, *self.fingers["MIDDLE"], w, h):
                             self.play_note("MI")
                             self.draw_finger_text(final_frame, "MIDDLE", "MI", hand.landmark[12], w, h)
-
                         if self.rec.finger_extended(hand, *self.fingers["INDEX"], w, h):
                             self.play_note("FA")
                             self.draw_finger_text(final_frame, "INDEX", "FA", hand.landmark[8], w, h)
-
                         if self.rec.finger_extended(hand, *self.fingers["THUMB"], w, h, label, "THUMB"):
                             self.play_note("SOL")
                             self.draw_finger_text(final_frame, "THUMB", "SOL", hand.landmark[4], w, h)
@@ -116,23 +121,16 @@ class TP3:
                         if self.rec.finger_extended(hand, *self.fingers["INDEX"], w, h):
                             self.play_note("LA")
                             self.draw_finger_text(final_frame, "INDEX", "LA", hand.landmark[8], w, h)
-
                         if self.rec.finger_extended(hand, *self.fingers["MIDDLE"], w, h):
                             self.play_note("SI")
                             self.draw_finger_text(final_frame, "MIDDLE", "SI", hand.landmark[12], w, h)
 
-                        if self.rec.finger_extended(hand, *self.fingers["THUMB"], w, h, label, "THUMB"):
-                            self.play_note("SOL")
-                            self.draw_finger_text(final_frame, "THUMB", "SOL", hand.landmark[4], w, h)
-
             cv2.imshow("Maestro", final_frame)
-
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            if cv2.waitKey(50) & 0xFF == ord('q'):
                 break
 
         self.cap.release()
         cv2.destroyAllWindows()
-        pygame.mixer.quit()
 
 
 if __name__ == "__main__":
